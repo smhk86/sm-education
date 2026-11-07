@@ -29,10 +29,13 @@
  const SOLUTION=/(حل|الحل|تصحيح|corrig|solution)/i;
 
  /* ---------- host / url rules ---------- */
+ /* content server = this project's own GitHub Pages (publicContentBase): files fetched into the repo are served from there */
+ const serverBase=()=>{try{const c=window.SM_SCHOOL_CONFIG||{};const b=String(lsGet('smContentBase')||c.publicContentBase||'').trim().replace(/\/+$/,'');return /^https:\/\/[^\/]+/i.test(b)?b:''}catch(e){return ''}};
+ const isServer=u=>{const b=serverBase();return !!b&&String(u||'').startsWith(b+'/')};
  const hosts=()=>{const c=window.SM_SCHOOL_CONFIG||{};return (Array.isArray(c.dzexamsHosts)&&c.dzexamsHosts.length?c.dzexamsHosts:['dzexams.com']).map(h=>String(h).toLowerCase())};
  const hostOk=h=>{h=String(h||'').toLowerCase();return hosts().some(x=>h===x||h.endsWith('.'+x))};
  const parseUrl=u=>{try{return new URL(String(u||'').trim())}catch(e){return null}};
- const urlOk=u=>{const x=parseUrl(u);return !!x&&x.protocol==='https:'&&hostOk(x.hostname)};
+ const urlOk=u=>{const x=parseUrl(u);return !!x&&x.protocol==='https:'&&(hostOk(x.hostname)||isServer(x.href))};
  const ext=d=>String(d&&d.ext||((String(d&&d.url||'').split(/[?#]/)[0].match(/\.(\w+)$/)||[])[1])||'pdf').toLowerCase();
 
  /* ---------- subject detection (from link text, page title and file name) ---------- */
@@ -88,7 +91,7 @@
  let docs=[],have=new Set(),ready=false,loading=null;
  try{const j=JSON.parse(lsGet(IDX_KEY)||'null');if(j&&Array.isArray(j.documents))docs=j.documents}catch(e){}
  const saveIdx=()=>lsSet(IDX_KEY,JSON.stringify({version:1,documents:docs}));
- function load(){if(!loading)loading=store.keys().then(k=>{have=k}).catch(()=>{}).then(()=>{ready=true;refresh();return true});return loading}
+ function load(){if(!loading)loading=store.keys().then(k=>{have=k}).catch(()=>{}).then(()=>{ready=true;refresh();if(perm()&&serverBase()&&!S.synced)syncServer(false);return true});return loading}
  const gradeDocs=()=>docs.map((d,i)=>({d,i})).filter(x=>x.d.grade===S.grade);
  const norm=s=>String(s||'').replace(/[\u064B-\u065F\u0640]/g,'').toLowerCase();
  function filtered(){
@@ -110,6 +113,7 @@
   return out;
  }
  async function robotsAllows(u){
+  if(isServer(u))return true;
   const x=new URL(u);let rules=robotsCache[x.origin];
   if(!rules){
    let r;try{r=await fetch(x.origin+'/robots.txt',{credentials:'omit'})}catch(e){throw new Error('robots-unreachable')}
@@ -205,6 +209,35 @@
  }
  function cancelScan(){if(S.scan)S.scan.ctl.abort()}
 
+ /* ---------- index published on the content server ---------- */
+ let syncing=null;
+ async function syncServer(manual){
+  if(!perm()){if(manual)needPerm();return false}
+  const base=serverBase();
+  if(!base){if(manual)say(tr('لم يُضبط عنوان الخادم (publicContentBase).','Adresse du serveur non définie.','Content server address is not set.'));return false}
+  if(syncing)return syncing;
+  syncing=(async()=>{
+   try{
+    const r=await fetch(base+'/data/dzexams-index.json?t='+Date.now(),{credentials:'omit'});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const j=await r.json(),list=Array.isArray(j&&j.documents)?j.documents:[];
+    let added=0;
+    list.forEach(x=>{
+     if(!x||typeof x.file!=='string'||!x.grade||!/^exams\/[A-Za-z0-9._\/-]+$/.test(x.file)||x.file.includes('..'))return;
+     const u=base+'/'+x.file;
+     if(docs.some(d=>d.file===u&&d.grade===x.grade))return;
+     docs.push({file:u,url:u,title:String(x.title||'dzexams').slice(0,160),subject:x.subject||'',grade:String(x.grade),ext:ext({url:u}),solution:!!x.solution,bytes:+x.bytes||0,page:'server',server:true,at:Date.now()});added++;
+    });
+    if(added)saveIdx();
+    S.synced=true;refresh();
+    if(manual)say(added?tr(`أُضيف ${added} ملف من الخادم`,`${added} fichier(s) ajouté(s)`,`${added} file(s) added from the server`):tr('القائمة محدّثة، لا جديد.','Liste à jour.','List is up to date.'));
+    return true;
+   }catch(e){if(manual)say(tr('تعذّر قراءة فهرس الخادم. تحقق من الاتصال ومن أن المحتوى منشور.','Index du serveur illisible.','Could not read the server index. Check your connection and that the content is published.'));return false}
+   finally{syncing=null}
+  })();
+  return syncing;
+ }
+
  /* ---------- download ---------- */
  async function fetchDoc(i,signal){
   const d=docs[i];
@@ -261,7 +294,7 @@
     S.bulk.fail++;
     if(e&&e.message==='refused'&&++refused>=3){say(scanErr(e));break}
    }
-   refreshList();await pause(1500);
+   refreshList();if(!isServer(docs[i].url))await pause(1500);
   }
   const b=S.bulk;S.bulk=null;refreshList();
   say(tr(`حُمّل ${b.done} من ${b.n}`+(b.fail?` — تعذّر ${b.fail}`:''),`${b.done}/${b.n} téléchargés`,`${b.done}/${b.n} downloaded`));
@@ -337,6 +370,9 @@
    `<div class="tl-filters"><input id="dzNote" type="text" maxlength="200" placeholder="${tr('مرجع الموافقة (اختياري): تاريخ الرسالة أو اسم المرسِل','Référence de l’accord (facultatif)','Agreement reference (optional)')}">`+
    `<button type="button" class="primary-btn tl-btn" onclick="SM_DZLIB.grant(document.getElementById('dzAck').checked,document.getElementById('dzNote').value)">${tr('تفعيل','Activer','Enable')}</button></div>`+credit();
  }
+ function serverHtml(){
+  return serverBase()?`<div class="tl-filters"><button type="button" class="primary-btn tl-btn" onclick="SM_DZLIB.syncServer(true)">🔄 ${tr('تحديث القائمة من الخادم','Mettre à jour depuis le serveur','Update list from the server')}</button></div>`:'';
+ }
  function scanHtml(){
   const sc=S.scan,when=perm()&&perm().at?new Date(perm().at).toLocaleDateString(L()==='ar'?'ar-DZ':L()==='fr'?'fr-FR':'en-GB'):'';
   return `<div class="tl-filters"><input id="dzUrl" type="url" inputmode="url" dir="ltr" value="${esc(S.url)}" oninput="SM_DZLIB.setv('url',this.value)" placeholder="https://www.dzexams.com/…">`+
@@ -364,7 +400,7 @@
   if(!ready)return head()+`<p>${tr('جارٍ التحميل…','Chargement…','Loading…')}</p>`;
   if(!perm())return head()+permHtml();
   const opt=(v,t,c)=>`<option value="${esc(v)}" ${String(c)===String(v)?'selected':''}>${esc(t)}</option>`;
-  return head()+scanHtml()+`<div class="tl-filters"><select aria-label="${tr('المادة','Matière','Subject')}" onchange="SM_DZLIB.set('subject',this.value)">${opt('',tr('كل المواد','Toutes','All subjects'),S.subject)}${[...new Set(gradeDocs().map(x=>x.d.subject).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ar')).map(s=>opt(s,s,S.subject)).join('')}</select><input type="search" value="${esc(S.q)}" placeholder="${tr('بحث','Rechercher','Search')}" oninput="SM_DZLIB.set('q',this.value)">`+
+  return head()+serverHtml()+scanHtml()+`<div class="tl-filters"><select aria-label="${tr('المادة','Matière','Subject')}" onchange="SM_DZLIB.set('subject',this.value)">${opt('',tr('كل المواد','Toutes','All subjects'),S.subject)}${[...new Set(gradeDocs().map(x=>x.d.subject).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ar')).map(s=>opt(s,s,S.subject)).join('')}</select><input type="search" value="${esc(S.q)}" placeholder="${tr('بحث','Rechercher','Search')}" oninput="SM_DZLIB.set('q',this.value)">`+
    `<select aria-label="${tr('الصيغة','Format','Format')}" onchange="SM_DZLIB.set('ext',this.value)">${opt('',tr('كل الصيغ','Tous','All formats'),S.ext)}${opt('pdf','PDF',S.ext)}${opt('docx','Word',S.ext)}</select>`+
    `<label class="tl-check"><input type="checkbox" ${S.sol?'checked':''} onchange="SM_DZLIB.set('sol',this.checked)"> ${tr('مع الحل فقط','Corrigés','With solution')}</label></div>`+
    `<div id="dzList">${listHtml()}</div>`+credit();
@@ -381,8 +417,8 @@
  function setv(k,v){S[k]=v}
 
  window.dzexamsPanel=panel;
- window.SM_DZLIB={set,setv,more(){S.shown+=PAGE;refreshList()},grant,revoke,scan,cancelScan,open:openDoc,save,saveCurrent,close:()=>closeViewer(false),downloadAll,cancelBulk,clearGrade,
-  _t:{S,subjectOf,lastUrls,store,load,filtered,fetchDoc,scan,robotsRules,robotsAllows,extract,titleFor,hostOk,urlOk,perm,docs:()=>docs,have:()=>have,reset(){docs=[];ready=false;loading=null;have=new Set();mem.clear();Object.keys(robotsCache).forEach(k=>delete robotsCache[k]);Object.assign(S,{grade:'',subject:'',q:'',sol:false,ext:'',shown:PAGE,bulk:null,view:null,scan:null,url:'',deep:false})}}};
+ window.SM_DZLIB={syncServer,set,setv,more(){S.shown+=PAGE;refreshList()},grant,revoke,scan,cancelScan,open:openDoc,save,saveCurrent,close:()=>closeViewer(false),downloadAll,cancelBulk,clearGrade,
+  _t:{S,serverBase,isServer,syncServer,subjectOf,lastUrls,store,load,filtered,fetchDoc,scan,robotsRules,robotsAllows,extract,titleFor,hostOk,urlOk,perm,docs:()=>docs,have:()=>have,reset(){docs=[];ready=false;loading=null;have=new Set();mem.clear();Object.keys(robotsCache).forEach(k=>delete robotsCache[k]);Object.assign(S,{grade:'',subject:'',q:'',sol:false,ext:'',shown:PAGE,bulk:null,view:null,scan:null,url:'',deep:false})}}};
 
  const st=document.createElement('style');
  st.textContent='.tl-chips{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}.tl-pdfwrap{overflow:auto;height:calc(100% - 60px);padding:8px;background:#e9edf3}.tl-pg{display:block;margin:0 auto 8px;background:#fff;box-shadow:0 1px 4px #0003}';
