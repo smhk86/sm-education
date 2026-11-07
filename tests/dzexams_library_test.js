@@ -113,7 +113,7 @@ const Z=window.SM_DZLIB,T=Z._t;
  const index=fs.readFileSync(path.join(root,'web/index.html'),'utf8'),sw=fs.readFileSync(path.join(root,'web/sw.js'),'utf8');
  assert(index.includes('src="dzexams-library.js"')&&sw.includes('./dzexams-library.js'));
  for(const p of ['capacitor.config.json','android-wrapper/capacitor.config.json'])assert.strictEqual(JSON.parse(fs.readFileSync(path.join(root,p),'utf8')).plugins.CapacitorHttp.enabled,true,p);
- const cfg=fs.readFileSync(path.join(root,'web/config.js'),'utf8');assert(cfg.includes("dzexamsHosts: ['dzexams.com']"));
+ const cfg=fs.readFileSync(path.join(root,'web/config.js'),'utf8');assert(cfg.includes("dzexamsHosts: ['dzexams.com', 'dzexams.pro']"));
  const bad=[];
  (function walk(dir){for(const n of fs.readdirSync(dir)){const p=path.join(dir,n),s=fs.statSync(p);
   if(s.isDirectory()){if(n!=='vendor')walk(p);continue}
