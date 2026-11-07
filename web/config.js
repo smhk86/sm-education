@@ -1,6 +1,6 @@
 /* Public runtime configuration only. Never place API keys or secrets in this file. */
 window.SM_SCHOOL_CONFIG = Object.freeze({
-  publicContentBase: 'https://hakou44.github.io/sm-edu', // Set once to the deployed HTTPS Pages base, e.g. https://OWNER.github.io/REPOSITORY (no trailing slash).
+  publicContentBase: 'https://smhk86.github.io/sm-education', // Set once to the deployed HTTPS Pages base, e.g. https://OWNER.github.io/REPOSITORY (no trailing slash).
     dzexamsHosts: ['dzexams.com'], // Hosts the in-app exam downloader may contact (the site and its subdomains). Add a CDN host here only if the owners told you their files are served from it.
   apiBase: '', // Set to the deployed FastAPI origin for Android builds, e.g. https://api.example.dz (or use the in-app tutor server setting)
   aiCourseFeed: '' // Optional override; otherwise publicContentBase + /data/ai-course-updates.json is used.
